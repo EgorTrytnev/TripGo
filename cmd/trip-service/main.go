@@ -1,0 +1,4 @@
+package tripservice
+
+func main() {
+}
