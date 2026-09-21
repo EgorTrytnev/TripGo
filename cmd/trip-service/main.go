@@ -9,12 +9,19 @@ import (
 	"syscall"
 
 	"github.com/EgorTrytnev/TripGo/internal/config"
+	"github.com/EgorTrytnev/TripGo/internal/db"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
 
 func main() {
 	cfg := config.Load()
+
+	pool, err := db.NewPool(cfg)
+	if err != nil {
+		log.Fatalf("database startup failed: %v", err)
+	}
+	defer pool.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -56,8 +63,7 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
-	err := srv.Shutdown(shutdownCtx)
-	if err != nil {
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("error shutdown: %v", err)
 	} else {
 		log.Println("server stopped")
