@@ -2,9 +2,7 @@ package repository
 
 import (
 	"context"
-	"errors"
 	"fmt"
-
 	"time"
 
 	db "github.com/EgorTrytnev/TripGo/internal/db"
@@ -17,8 +15,6 @@ import (
 )
 
 var psql = sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
-
-var ErrTripNotFound = errors.New("trip not found")
 
 type TripRepository struct {
 	db *pgxpool.Pool
@@ -34,19 +30,20 @@ func NewTripRepository(db *pgxpool.Pool) *TripRepository {
 	return &TripRepository{db: db}
 }
 
-func (*TripRepository) excecutor(ctx context.Context) db.DBContext {
-	if tx, ok := ctx.Value(db.TxKey{}).(pgx.Tx); ok {
+func (r *TripRepository) executor(ctx context.Context) DBContext {
+	if tx, ok := db.TxFromContext(ctx); ok {
 		return tx
 	}
 
-	return nil
+	return r.db
 }
 
 func (r *TripRepository) CreateTrip(ctx context.Context, trip service.TripEntity) error {
+	exec := r.executor(ctx)
 
 	q, args, err := psql.Insert("trips").Columns(
 		"id", "user_id", "driver_id",
-		"start_lat", "start_long", "end_lat", "end_long",
+		"start_latitude", "start_longitude", "end_latitude", "end_longitude",
 		"price", "status",
 		"started_at", "finished_at", "created_at", "updated_at").
 		Values(
@@ -59,20 +56,19 @@ func (r *TripRepository) CreateTrip(ctx context.Context, trip service.TripEntity
 		return fmt.Errorf("create sql error: %w", err)
 	}
 
-	_, err = r.db.Exec(ctx, q, args...)
+	_, err = exec.Exec(ctx, q, args...)
 	if err != nil {
 		return fmt.Errorf("create exec error: %w", err)
 	}
 
 	return nil
-
 }
 
 func (r *TripRepository) GetTripByID(ctx context.Context, id uuid.UUID) (service.TripEntity, error) {
-
+	exec := r.executor(ctx)
 	q, args, err := psql.Select(
 		"id", "user_id", "driver_id",
-		"start_lat", "start_long", "end_lat", "end_long",
+		"start_latitude", "start_longitude", "end_latitude", "end_longitude",
 		"price", "status",
 		"started_at", "finished_at", "created_at", "updated_at").
 		From("trips").Where(sq.Eq{"id": id}).ToSql()
@@ -81,7 +77,7 @@ func (r *TripRepository) GetTripByID(ctx context.Context, id uuid.UUID) (service
 		return service.TripEntity{}, fmt.Errorf("get sql error: %w", err)
 	}
 	var trip service.TripEntity
-	err = r.db.QueryRow(ctx, q, args...).Scan(
+	err = exec.QueryRow(ctx, q, args...).Scan(
 		&trip.ID, &trip.UserID, &trip.DriverID,
 		&trip.StartLat, &trip.StartLong, &trip.EndLat, &trip.EndLong,
 		&trip.Price, &trip.Status,
@@ -96,6 +92,7 @@ func (r *TripRepository) GetTripByID(ctx context.Context, id uuid.UUID) (service
 }
 
 func (r *TripRepository) UpdateTripStatus(ctx context.Context, tripID uuid.UUID, status string, finishedAt *time.Time) error {
+	exec := r.executor(ctx)
 	q, args, err := psql.Update("trips").
 		Set("status", status).
 		Set("finished_at", finishedAt).
@@ -106,13 +103,40 @@ func (r *TripRepository) UpdateTripStatus(ctx context.Context, tripID uuid.UUID,
 		return fmt.Errorf("update sql error: %w", err)
 	}
 
-	ret, err := r.db.Exec(ctx, q, args...)
+	ret, err := exec.Exec(ctx, q, args...)
 	if err != nil {
 		return fmt.Errorf("update error: %w", err)
 	}
 
 	if ret.RowsAffected() == 0 {
-		return ErrTripNotFound
+		return service.ErrTripNotFound
+	}
+
+	return nil
+}
+
+func (r *TripRepository) CreateHistory(ctx context.Context, history service.TripStatusHistoryEntity) error {
+	exec := r.executor(ctx)
+
+	q, args, err := psql.Insert("trip_status_history").Columns(
+		"trip_id",
+		"from_status",
+		"to_status",
+		"reason",
+		"changed_at",
+	).Values(
+		history.TripID,
+		history.FromStatus,
+		history.ToStatus,
+		history.Reason,
+		history.ChangedAt,
+	).ToSql()
+	if err != nil {
+		return fmt.Errorf("create history sql error: %w", err)
+	}
+
+	if _, err := exec.Exec(ctx, q, args...); err != nil {
+		return fmt.Errorf("create history exec error: %w", err)
 	}
 
 	return nil

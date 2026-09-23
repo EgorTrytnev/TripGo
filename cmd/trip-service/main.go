@@ -10,6 +10,10 @@ import (
 
 	"github.com/EgorTrytnev/TripGo/internal/config"
 	"github.com/EgorTrytnev/TripGo/internal/db"
+	api "github.com/EgorTrytnev/TripGo/internal/generated"
+	"github.com/EgorTrytnev/TripGo/internal/handler"
+	"github.com/EgorTrytnev/TripGo/internal/repository"
+	"github.com/EgorTrytnev/TripGo/internal/service"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -23,28 +27,18 @@ func main() {
 	}
 	defer pool.Close()
 
+	txManager := db.NewTxManager(pool)
+	tripRepo := repository.NewTripRepository(pool)
+	tripService := service.NewTripService(tripRepo, txManager)
+	apiHandler := handler.NewHandler(tripService, pool)
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte("OK"))
-		if err != nil {
-			log.Printf("health check error: %v", err)
-		}
-	})
-
-	r.Get("/ready", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte("Yes, Im ready!"))
-		if err != nil {
-			log.Printf("error ready: %v", err)
-		}
-	})
+	api.HandlerFromMux(apiHandler, r)
 
 	srv := &http.Server{
 		Addr:    cfg.HTTPAddr,

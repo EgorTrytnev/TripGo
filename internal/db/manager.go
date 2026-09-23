@@ -18,7 +18,7 @@ func NewTxManager(pool *pgxpool.Pool) *TxManager {
 }
 
 func (m *TxManager) Do(ctx context.Context, fn func(context.Context) error) (err error) {
-	_, ind := ctx.Value(txKey{}).(pgx.Tx)
+	_, ind := TxFromContext(ctx)
 	if ind {
 		return fn(ctx)
 	}
@@ -47,4 +47,9 @@ func (m *TxManager) Do(ctx context.Context, fn func(context.Context) error) (err
 	err = fn(ctxN)
 
 	return err
+}
+
+func TxFromContext(ctx context.Context) (pgx.Tx, bool) {
+	tx, ok := ctx.Value(txKey{}).(pgx.Tx)
+	return tx, ok
 }

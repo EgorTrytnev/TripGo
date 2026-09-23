@@ -19,7 +19,7 @@ func TripDataToEntity(req api.TripData) TripEntity {
 		EndLat:    req.EndPoint.Latitude,
 		EndLong:   req.EndPoint.Longitude,
 		Price:     req.Price,
-		Status:    "active",
+		Status:    StatusActive,
 		StartedAt: now,
 		CreatedAt: now,
 		UpdatedAt: now,

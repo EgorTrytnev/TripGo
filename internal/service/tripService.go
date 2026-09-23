@@ -2,9 +2,21 @@ package service
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	api "github.com/EgorTrytnev/TripGo/internal/generated"
 	"github.com/google/uuid"
+)
+
+const (
+	StatusActive    = "active"
+	StatusCompleted = "completed"
+)
+
+var (
+	ErrTripNotFound  = errors.New("trip not found")
+	ErrTripCompleted = errors.New("trip already completed")
 )
 
 type TripEntity struct {
@@ -37,4 +49,103 @@ type TripStatusHistoryEntity struct {
 
 type TxManager interface {
 	Do(ctx context.Context, fn func(context.Context) error) error
+}
+
+type TripRepository interface {
+	CreateTrip(ctx context.Context, trip TripEntity) error
+	CreateHistory(ctx context.Context, history TripStatusHistoryEntity) error
+	GetTripByID(ctx context.Context, id uuid.UUID) (TripEntity, error)
+	UpdateTripStatus(ctx context.Context, tripID uuid.UUID, status string, finishedAt *time.Time) error
+}
+
+type TripService struct {
+	repo      TripRepository
+	txManager TxManager
+}
+
+func NewTripService(repo TripRepository, txManager TxManager) *TripService {
+	return &TripService{
+		repo:      repo,
+		txManager: txManager,
+	}
+}
+
+func (s *TripService) CreateTrip(ctx context.Context, req api.TripData) (api.Trip, error) {
+	trip := TripDataToEntity(req)
+	history := TripStatusHistoryToEntity(
+		trip.ID,
+		"",
+		StatusActive,
+		"trip created",
+	)
+
+	err := s.txManager.Do(ctx, func(txCtx context.Context) error {
+		if err := s.repo.CreateTrip(txCtx, trip); err != nil {
+			return err
+		}
+
+		return s.repo.CreateHistory(txCtx, history)
+	})
+	if err != nil {
+		return api.Trip{}, err
+	}
+
+	return TripEntityToResponse(trip), nil
+}
+
+func (s *TripService) GetTrip(ctx context.Context, id uuid.UUID) (api.Trip, error) {
+	var trip TripEntity
+
+	err := s.txManager.Do(ctx, func(txCtx context.Context) error {
+		var err error
+		trip, err = s.repo.GetTripByID(txCtx, id)
+		return err
+	})
+	if err != nil {
+		return api.Trip{}, err
+	}
+
+	return TripEntityToResponse(trip), nil
+}
+
+func (s *TripService) FinishTrip(ctx context.Context, id uuid.UUID) (api.Trip, error) {
+	var trip TripEntity
+
+	err := s.txManager.Do(ctx, func(txCtx context.Context) error {
+		var err error
+		trip, err = s.repo.GetTripByID(txCtx, id)
+		if err != nil {
+			return err
+		}
+
+		if trip.Status == StatusCompleted {
+			return ErrTripCompleted
+		}
+
+		finishedAt := time.Now()
+		if err := s.repo.UpdateTripStatus(txCtx, id, StatusCompleted, &finishedAt); err != nil {
+			return err
+		}
+
+		history := TripStatusHistoryToEntity(
+			trip.ID,
+			trip.Status,
+			StatusCompleted,
+			"trip finished",
+		)
+		if err := s.repo.CreateHistory(txCtx, history); err != nil {
+			return err
+		}
+
+		trip.Status = StatusCompleted
+		trip.FinishedAt = &finishedAt
+		trip.UpdatedAt = finishedAt
+
+		return nil
+	})
+	if err != nil {
+		return api.Trip{}, err
+	}
+
+	return TripEntityToResponse(trip), nil
 }
