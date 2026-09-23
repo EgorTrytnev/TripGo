@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,4 +33,8 @@ type TripStatusHistoryEntity struct {
 	ToStatus   string
 	Reason     string
 	ChangedAt  time.Time
+}
+
+type TxManager interface {
+	Do(ctx context.Context, fn func(context.Context) error) error
 }

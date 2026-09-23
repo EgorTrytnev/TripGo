@@ -7,9 +7,12 @@ import (
 
 	"time"
 
+	db "github.com/EgorTrytnev/TripGo/internal/db"
 	"github.com/EgorTrytnev/TripGo/internal/service"
 	sq "github.com/Masterminds/squirrel"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -21,8 +24,22 @@ type TripRepository struct {
 	db *pgxpool.Pool
 }
 
+type DBContext interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 func NewTripRepository(db *pgxpool.Pool) *TripRepository {
 	return &TripRepository{db: db}
+}
+
+func (*TripRepository) excecutor(ctx context.Context) db.DBContext {
+	if tx, ok := ctx.Value(db.TxKey{}).(pgx.Tx); ok {
+		return tx
+	}
+
+	return nil
 }
 
 func (r *TripRepository) CreateTrip(ctx context.Context, trip service.TripEntity) error {
