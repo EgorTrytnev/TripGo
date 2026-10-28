@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -10,11 +11,12 @@ import (
 type txKey struct{}
 
 type TxManager struct {
-	pool *pgxpool.Pool
+	pool         *pgxpool.Pool
+	queryTimeout time.Duration
 }
 
-func NewTxManager(pool *pgxpool.Pool) *TxManager {
-	return &TxManager{pool: pool}
+func NewTxManager(pool *pgxpool.Pool, queryTimeout time.Duration) *TxManager {
+	return &TxManager{pool: pool, queryTimeout: queryTimeout}
 }
 
 func (m *TxManager) Do(ctx context.Context, fn func(context.Context) error) (err error) {
@@ -23,28 +25,35 @@ func (m *TxManager) Do(ctx context.Context, fn func(context.Context) error) (err
 		return fn(ctx)
 	}
 
-	tx, err := m.pool.Begin(ctx)
+	txCtx, cancel := context.WithTimeout(ctx, m.queryTimeout)
+	defer cancel()
+
+	tx, err := m.pool.BeginTx(txCtx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return err
 	}
 
-	ctxN := context.WithValue(ctx, txKey{}, tx)
+	txCtx = context.WithValue(txCtx, txKey{}, tx)
 
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			_ = tx.Rollback(ctx)
+			rollbackCtx, rollbackCancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+			_ = tx.Rollback(rollbackCtx)
+			rollbackCancel()
 			panic(recovered)
 		}
 
 		if err != nil {
-			_ = tx.Rollback(ctx)
+			rollbackCtx, rollbackCancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+			_ = tx.Rollback(rollbackCtx)
+			rollbackCancel()
 			return
 		}
 
-		err = tx.Commit(ctx)
+		err = tx.Commit(txCtx)
 	}()
 
-	err = fn(ctxN)
+	err = fn(txCtx)
 
 	return err
 }

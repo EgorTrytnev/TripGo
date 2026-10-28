@@ -19,18 +19,23 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("configuration failed: %v", err)
+	}
 
-	pool, err := db.NewPool(cfg)
+	startupCtx, cancelStartup := context.WithTimeout(context.Background(), cfg.DatabaseConnectTimeout+cfg.DatabaseQueryTimeout)
+	defer cancelStartup()
+	pool, err := db.NewPool(startupCtx, cfg)
 	if err != nil {
 		log.Fatalf("database startup failed: %v", err)
 	}
 	defer pool.Close()
 
-	txManager := db.NewTxManager(pool)
-	tripRepo := repository.NewTripRepository(pool)
+	txManager := db.NewTxManager(pool, cfg.DatabaseQueryTimeout)
+	tripRepo := repository.NewTripRepository(pool, cfg.DatabaseQueryTimeout)
 	tripService := service.NewTripService(tripRepo, txManager)
-	apiHandler := handler.NewHandler(tripService, pool)
+	apiHandler := handler.NewHandler(tripService, pool, cfg.DatabaseQueryTimeout)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -38,28 +43,41 @@ func main() {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	api.HandlerFromMux(apiHandler, r)
+	api.HandlerWithOptions(apiHandler, api.ChiServerOptions{
+		BaseRouter:       r,
+		ErrorHandlerFunc: apiHandler.OpenAPIErrorHandler,
+	})
 
 	srv := &http.Server{
-		Addr:    cfg.HTTPAddr,
-		Handler: r,
+		Addr:              cfg.HTTPAddr,
+		Handler:           r,
+		ReadTimeout:       cfg.ReadTimeout,
+		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
+		WriteTimeout:      cfg.WriteTimeout,
+		IdleTimeout:       cfg.IdleTimeout,
 	}
 
+	serverErr := make(chan error, 1)
 	go func() {
 		log.Printf("starting server on %s", cfg.HTTPAddr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("server error: %v", err)
-		}
+		serverErr <- srv.ListenAndServe()
 	}()
 
-	<-ctx.Done()
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-	defer cancel()
-
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("error shutdown: %v", err)
-	} else {
-		log.Println("server stopped")
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("graceful shutdown failed: %v; closing server", err)
+			if closeErr := srv.Close(); closeErr != nil {
+				log.Printf("force close failed: %v", closeErr)
+			}
+		} else {
+			log.Println("server stopped")
+		}
+	case err := <-serverErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("server error: %v", err)
+		}
 	}
 }

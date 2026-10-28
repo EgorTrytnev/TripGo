@@ -1,7 +1,7 @@
 APP=trip-service
 BIN=./bin/$(APP)
 
-.PHONY: build run test tidy generate
+.PHONY: build run test tidy generate migrate migrate-down
 
 build:
 	@mkdir -p bin
@@ -9,6 +9,12 @@ build:
 
 run:
 	@go run ./cmd/$(APP)
+
+migrate:
+	@set -a; . ./.env; set +a; go tool goose -dir migrations postgres "$$DATABASE_URL" up
+
+migrate-down:
+	@set -a; . ./.env; set +a; go tool goose -dir migrations postgres "$$DATABASE_URL" down-to 0
 
 generate:
 	@go tool oapi-codegen \
@@ -19,7 +25,7 @@ generate:
 		contracts/openapi/trip-service.openapi.yaml
 
 test:
-	@go test ./...
+	@go test -race ./...
 
 tidy:
 	@go mod tidy

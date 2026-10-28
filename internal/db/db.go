@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func NewPool(cfg config.Config) (*pgxpool.Pool, error) {
+func NewPool(ctx context.Context, cfg config.Config) (*pgxpool.Pool, error) {
 	if cfg.DatabaseURL == "" {
 		return nil, errors.New("URL is empty")
 	}
@@ -24,12 +24,12 @@ func NewPool(cfg config.Config) (*pgxpool.Pool, error) {
 	poolCfg.MaxConnLifetime = cfg.DatabaseMaxConnLife
 	poolCfg.ConnConfig.ConnectTimeout = cfg.DatabaseConnectTimeout
 
-	pool, err := pgxpool.NewWithConfig(context.Background(), poolCfg)
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return nil, fmt.Errorf("pool create: %w", err)
 	}
 
-	pingCtx, cancel := context.WithTimeout(context.Background(), cfg.DatabaseQueryTimeout)
+	pingCtx, cancel := context.WithTimeout(ctx, cfg.DatabaseQueryTimeout)
 	defer cancel()
 
 	if err := pool.Ping(pingCtx); err != nil {

@@ -17,6 +17,7 @@ const (
 var (
 	ErrTripNotFound  = errors.New("trip not found")
 	ErrTripCompleted = errors.New("trip already completed")
+	ErrDriverBusy    = errors.New("driver already has an active trip")
 )
 
 type TripEntity struct {
@@ -55,6 +56,7 @@ type TripRepository interface {
 	CreateTrip(ctx context.Context, trip TripEntity) error
 	CreateHistory(ctx context.Context, history TripStatusHistoryEntity) error
 	GetTripByID(ctx context.Context, id uuid.UUID) (TripEntity, error)
+	GetTripByIDForUpdate(ctx context.Context, id uuid.UUID) (TripEntity, error)
 	UpdateTripStatus(ctx context.Context, tripID uuid.UUID, status string, finishedAt *time.Time) error
 }
 
@@ -94,13 +96,7 @@ func (s *TripService) CreateTrip(ctx context.Context, req api.TripData) (api.Tri
 }
 
 func (s *TripService) GetTrip(ctx context.Context, id uuid.UUID) (api.Trip, error) {
-	var trip TripEntity
-
-	err := s.txManager.Do(ctx, func(txCtx context.Context) error {
-		var err error
-		trip, err = s.repo.GetTripByID(txCtx, id)
-		return err
-	})
+	trip, err := s.repo.GetTripByID(ctx, id)
 	if err != nil {
 		return api.Trip{}, err
 	}
@@ -113,7 +109,7 @@ func (s *TripService) FinishTrip(ctx context.Context, id uuid.UUID) (api.Trip, e
 
 	err := s.txManager.Do(ctx, func(txCtx context.Context) error {
 		var err error
-		trip, err = s.repo.GetTripByID(txCtx, id)
+		trip, err = s.repo.GetTripByIDForUpdate(txCtx, id)
 		if err != nil {
 			return err
 		}
