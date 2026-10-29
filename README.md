@@ -51,3 +51,26 @@ make build         # собрать бинарный файл
 
 При остановке по `Ctrl+C` или сигналу `SIGTERM` сервер ждёт текущие запросы в
 пределах `SHUTDOWN_TIMEOUT`.
+
+## Docker (дополнительное задание)
+
+Сборка многостадийная: Go собирает статический бинарный файл, а в финальный
+образ `distroless` копируется только он.
+
+Поднять окружение и применить миграции:
+
+```sh
+docker compose up -d postgres
+go tool goose -dir migrations postgres \
+  'postgres://tripgo:tripgo@localhost:5432/tripgo?sslmode=disable' up
+docker compose up -d --build
+curl http://localhost:8080/ready
+```
+
+Остановить контейнеры:
+
+```sh
+docker compose down
+```
+
+Размер собранного итогового образа `tripgo-trip-service` — около 4,4 MB
