@@ -42,11 +42,11 @@ make run
 Полезные команды:
 
 ```sh
-make generate      # сгенерировать API-код из OpenAPI
-make migrate       # применить миграции
-make migrate-down  # откатить миграции
-make test          # запустить проверки с race detector
-make build         # собрать бинарный файл
+make generate
+make migrate
+make migrate-down
+make test
+make build
 ```
 
 При остановке по `Ctrl+C` или сигналу `SIGTERM` сервер ждёт текущие запросы в
@@ -56,21 +56,29 @@ make build         # собрать бинарный файл
 
 Сборка многостадийная: Go собирает статический бинарный файл, а в финальный
 образ `distroless` копируется только он.
-
-Поднять окружение и применить миграции:
-
-```sh
-docker compose up -d postgres
-go tool goose -dir migrations postgres \
-  'postgres://tripgo:tripgo@localhost:5432/tripgo?sslmode=disable' up
-docker compose up -d --build
-curl http://localhost:8080/ready
-```
-
-Остановить контейнеры:
+Сначала запусти окружение и создай `.env`:
 
 ```sh
-docker compose down
+tripgoctl cluster start
+tripgoctl environment start
+tripgoctl connect
 ```
 
-Размер собранного итогового образа `tripgo-trip-service` — около 4,4 MB
+Собери образ и запусти сервис, передав ему настройки из `.env`:
+
+```sh
+docker build -t tripgo-trip-service .
+```
+
+Перед запуском контейнера открой `.env` и в `DATABASE_URL` замени только хост
+`localhost` на `host.docker.internal`. 
+
+После изменения `.env` запусти контейнер:
+
+```sh
+docker run --rm --name trip-service -p 8080:8080 --env-file .env tripgo-trip-service
+```
+Миграции по-прежнему запускаются с хоста командой `make migrate`.
+
+Остановить сервис — `Ctrl+C`. Размер собранного итогового образа
+`tripgo-trip-service` — около 4,4 MB.
