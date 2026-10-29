@@ -1,0 +1,9 @@
+.git
+.env
+.env.*
+!.env.example
+.tripgo
+bin
+**/*_test.go
+**/testdata
+README.md
