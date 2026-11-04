@@ -1,0 +1,62 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - depguard
+    - errcheck
+    - forbidigo
+    - gochecknoinits
+    - gocritic
+    - gocyclo
+    - goconst
+    - gosec
+    - govet
+    - ineffassign
+    - makezero
+    - prealloc
+    - revive
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+    - whitespace
+  settings:
+    depguard:
+      rules:
+        domain:
+          files:
+            - "internal/domain/**/*.go"
+          deny:
+            - pkg: "net/http"
+              desc: "domain code must not depend on HTTP"
+            - pkg: "github.com/go-chi/chi/v5"
+              desc: "domain code must not depend on chi"
+            - pkg: "github.com/jackc/pgx"
+              desc: "domain code must not depend on pgx"
+            - pkg: "github.com/Masterminds/squirrel"
+              desc: "domain code must not depend on SQL builders"
+            - pkg: "go.opentelemetry.io/otel"
+              desc: "domain code must not depend on telemetry"
+        transport:
+          files:
+            - "internal/http/**/*.go"
+          deny:
+            - pkg: "github.com/EgorTrytnev/TripGo/internal/repository"
+              desc: "HTTP depends on usecases, not repositories"
+            - pkg: "github.com/EgorTrytnev/TripGo/internal/infra"
+              desc: "HTTP depends on usecases, not infrastructure"
+
+formatters:
+  enable:
+    - gofumpt
+    - gci
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/EgorTrytnev/TripGo)
