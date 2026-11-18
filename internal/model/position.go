@@ -6,7 +6,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Position is a recorded point of a trip route.
+// Position хранит одну точку маршрута поездки.
 type Position struct {
 	ID         int64
 	TripID     uuid.UUID
@@ -16,7 +16,7 @@ type Position struct {
 	CreatedAt  time.Time
 }
 
-// StaleTrip is the data needed to request a fresh position from a driver.
+// StaleTrip содержит данные поездки, для которой нужно запросить координаты.
 type StaleTrip struct {
 	ID             uuid.UUID
 	DriverID       uuid.UUID

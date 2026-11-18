@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/EgorTrytnev/TripGo/internal/config"
+	"github.com/EgorTrytnev/TripGo/internal/gateway/push"
 	api "github.com/EgorTrytnev/TripGo/internal/generated"
 	httpmiddleware "github.com/EgorTrytnev/TripGo/internal/http/middleware"
 	httptrip "github.com/EgorTrytnev/TripGo/internal/http/trip"
@@ -19,6 +20,7 @@ import (
 	"github.com/EgorTrytnev/TripGo/internal/usecase/trip/create"
 	"github.com/EgorTrytnev/TripGo/internal/usecase/trip/finish"
 	gettrip "github.com/EgorTrytnev/TripGo/internal/usecase/trip/get"
+	positiontrip "github.com/EgorTrytnev/TripGo/internal/usecase/trip/position"
 )
 
 // App holds the service server and resources that must be closed on shutdown.
@@ -53,7 +55,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	createUC := create.New(repo, tx, providers.Metrics, providers.Logger)
 	getUC := gettrip.New(repo)
 	finishUC := finish.New(repo, tx, providers.Metrics, providers.Logger)
-	handler := httptrip.NewHandler(createUC, getUC, finishUC, pool, cfg.DatabaseQueryTimeout, providers.Logger)
+	positionUC := positiontrip.New(repo, tx)
+	_ = push.New(cfg.PushHTTPURL, cfg.PushRequestTimeout)
+	handler := httptrip.NewHandler(createUC, getUC, finishUC, pool, cfg.DatabaseQueryTimeout, providers.Logger, positionUC)
 	r := chi.NewRouter()
 	r.Use(httpmiddleware.CaptureRoute)
 	httpMetrics, err := httpmiddleware.NewHTTPMetrics(providers.Meter.Meter("tripgo.http"))

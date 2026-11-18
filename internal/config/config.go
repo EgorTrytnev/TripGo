@@ -27,6 +27,8 @@ type Config struct {
 	DatabaseMaxConnLife    time.Duration
 	DatabaseConnectTimeout time.Duration
 	DatabaseQueryTimeout   time.Duration
+	PushHTTPURL            string
+	PushRequestTimeout     time.Duration
 }
 
 // Load reads the environment and validates required settings.
@@ -78,6 +80,12 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.DatabaseQueryTimeout, err = duration("DATABASE_QUERY_TIMEOUT"); err != nil {
+		return Config{}, err
+	}
+	if cfg.PushHTTPURL, err = required("PUSH_HTTP_URL"); err != nil {
+		return Config{}, err
+	}
+	if cfg.PushRequestTimeout, err = durationOrDefault("PUSH_REQUEST_TIMEOUT", time.Second); err != nil {
 		return Config{}, err
 	}
 
