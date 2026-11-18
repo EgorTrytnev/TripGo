@@ -1,7 +1,7 @@
 APP=trip-service
 BIN=./bin/$(APP)
 
-.PHONY: build run test tidy generate migrate migrate-down
+.PHONY: build run test test-integration lint tidy generate migrate migrate-down
 
 build:
 	@mkdir -p bin
@@ -23,9 +23,17 @@ generate:
 		-package api \
 		-o internal/generated/api.gen.go \
 		contracts/openapi/trip-service.openapi.yaml
+	@go generate ./internal/usecase/trip/...
 
 test:
-	@go test -race ./...
+	@go test -race -coverprofile=/tmp/tripgo.cover ./...
+	@go tool cover -func=/tmp/tripgo.cover | tail -n 1
+
+test-integration:
+	@set -a; . ./.env; set +a; go test -race -tags=integration ./internal/repository/...
+
+lint:
+	@golangci-lint run
 
 tidy:
 	@go mod tidy

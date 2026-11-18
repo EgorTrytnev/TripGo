@@ -1,3 +1,4 @@
+// Package config loads and validates the service configuration.
 package config
 
 import (
@@ -11,6 +12,7 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// Config contains the runtime settings for the TripGo service.
 type Config struct {
 	HTTPAddr               string
 	LogLevel               string
@@ -20,13 +22,14 @@ type Config struct {
 	WriteTimeout           time.Duration
 	IdleTimeout            time.Duration
 	DatabaseURL            string
-	DatabaseMaxConns       int
-	DatabaseMinConns       int
+	DatabaseMaxConns       int32
+	DatabaseMinConns       int32
 	DatabaseMaxConnLife    time.Duration
 	DatabaseConnectTimeout time.Duration
 	DatabaseQueryTimeout   time.Duration
 }
 
+// Load reads the environment and validates required settings.
 func Load() (Config, error) {
 	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return Config{}, fmt.Errorf("load .env: %w", err)
@@ -92,16 +95,16 @@ func required(key string) (string, error) {
 	return value, nil
 }
 
-func integer(key string) (int, error) {
+func integer(key string) (int32, error) {
 	value, err := required(key)
 	if err != nil {
 		return 0, err
 	}
-	parsed, err := strconv.Atoi(value)
+	parsed, err := strconv.ParseInt(value, 10, 32)
 	if err != nil {
 		return 0, fmt.Errorf("%s must be an integer: %w", key, err)
 	}
-	return parsed, nil
+	return int32(parsed), nil
 }
 
 func duration(key string) (time.Duration, error) {

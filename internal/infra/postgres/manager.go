@@ -1,4 +1,4 @@
-package db
+package postgres
 
 import (
 	"context"
@@ -10,15 +10,18 @@ import (
 
 type txKey struct{}
 
+// TxManager runs a callback in a PostgreSQL transaction.
 type TxManager struct {
 	pool         *pgxpool.Pool
 	queryTimeout time.Duration
 }
 
+// NewTxManager creates a transaction manager for a connection pool.
 func NewTxManager(pool *pgxpool.Pool, queryTimeout time.Duration) *TxManager {
 	return &TxManager{pool: pool, queryTimeout: queryTimeout}
 }
 
+// Do runs fn in a transaction and commits or rolls back its changes.
 func (m *TxManager) Do(ctx context.Context, fn func(context.Context) error) (err error) {
 	_, ind := TxFromContext(ctx)
 	if ind {
@@ -58,6 +61,7 @@ func (m *TxManager) Do(ctx context.Context, fn func(context.Context) error) (err
 	return err
 }
 
+// TxFromContext returns the transaction stored in ctx, if one exists.
 func TxFromContext(ctx context.Context) (pgx.Tx, bool) {
 	tx, ok := ctx.Value(txKey{}).(pgx.Tx)
 	return tx, ok
