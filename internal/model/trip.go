@@ -9,19 +9,20 @@ import (
 
 // Trip is the persistence and usecase representation of a trip.
 type Trip struct {
-	ID         uuid.UUID
-	UserID     uuid.UUID
-	DriverID   uuid.UUID
-	StartLat   float64
-	StartLong  float64
-	EndLat     float64
-	EndLong    float64
-	Price      int64
-	Status     string
-	StartedAt  time.Time
-	FinishedAt *time.Time
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	DriverID       uuid.UUID
+	StartLat       float64
+	StartLong      float64
+	EndLat         float64
+	EndLong        float64
+	Price          int64
+	Status         string
+	StartedAt      time.Time
+	FinishedAt     *time.Time
+	LastPositionAt *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // TripStatusHistory records a trip status transition.
