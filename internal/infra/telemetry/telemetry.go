@@ -29,8 +29,8 @@ type Providers struct {
 	Logger  *slog.Logger
 }
 
-// Init configures slog and OTLP exporters from environment variables.
-func Init(ctx context.Context, level string) (*Providers, error) {
+// NewLogger creates the JSON application logger.
+func NewLogger(level string) *slog.Logger {
 	var slogLevel slog.Level
 	switch strings.ToLower(level) {
 	case "debug":
@@ -42,8 +42,11 @@ func Init(ctx context.Context, level string) (*Providers, error) {
 	default:
 		slogLevel = slog.LevelInfo
 	}
-	logger := slog.New(&traceHandler{next: slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slogLevel})})
-	logger = logger.With("service", "trip-service")
+	return slog.New(&traceHandler{next: slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slogLevel})}).With("service", "trip-service")
+}
+
+// Init configures OTLP exporters and uses the supplied logger.
+func Init(ctx context.Context, logger *slog.Logger) (*Providers, error) {
 	protocol := strings.TrimSpace(strings.ToLower(os.Getenv("OTEL_EXPORTER_OTLP_PROTOCOL")))
 	if protocol == "" {
 		protocol = "grpc"

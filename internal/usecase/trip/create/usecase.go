@@ -36,6 +36,9 @@ func New(repo tripRepository, tx txManager, counter tripCounter, logger *slog.Lo
 
 // Execute creates a trip and records its initial status.
 func (u *UseCase) Execute(ctx context.Context, in Input) (model.Trip, error) {
+	if err := trip.Validate(in.UserID, in.DriverID, in.StartLat, in.StartLong, in.EndLat, in.EndLong, in.Price); err != nil {
+		return model.Trip{}, err
+	}
 	now := u.now()
 	t := model.Trip{ID: uuid.New(), UserID: in.UserID, DriverID: in.DriverID, StartLat: in.StartLat, StartLong: in.StartLong, EndLat: in.EndLat, EndLong: in.EndLong, Price: in.Price, Status: trip.StatusActive, StartedAt: now, CreatedAt: now, UpdatedAt: now}
 	h := model.TripStatusHistory{TripID: t.ID, ToStatus: trip.StatusActive, Reason: "trip created", ChangedAt: now}

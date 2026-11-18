@@ -4,6 +4,7 @@ package repository_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	domaintrip "github.com/EgorTrytnev/TripGo/internal/domain/trip"
 	"github.com/EgorTrytnev/TripGo/internal/infra/postgres"
 	"github.com/EgorTrytnev/TripGo/internal/model"
 	"github.com/EgorTrytnev/TripGo/internal/repository"
@@ -45,5 +47,29 @@ func TestCreateTripAndHistoryRollbackTogether(t *testing.T) {
 	}
 	if _, err := repo.GetTripByID(ctx, id); err == nil {
 		t.Fatal("trip row survived transaction rollback")
+	}
+}
+
+func TestCreateTripRejectsBusyDriver(t *testing.T) {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Fatal("DATABASE_URL must point at a migrated PostgreSQL database")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	repo := repository.NewTripRepository(pool, 3*time.Second)
+	now := time.Now().UTC()
+	item := model.Trip{ID: uuid.New(), UserID: uuid.New(), DriverID: uuid.New(), Status: domaintrip.StatusActive, StartedAt: now, CreatedAt: now, UpdatedAt: now}
+	defer func() { _, _ = pool.Exec(ctx, "DELETE FROM trips WHERE driver_id=$1", item.DriverID) }()
+	if err := repo.CreateTrip(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	item.ID = uuid.New()
+	if err := repo.CreateTrip(ctx, item); !errors.Is(err, domaintrip.ErrDriverBusy) {
+		t.Fatalf("got %v, want ErrDriverBusy", err)
 	}
 }

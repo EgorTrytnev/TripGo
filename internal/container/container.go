@@ -4,6 +4,7 @@ package container
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -28,8 +29,8 @@ type App struct {
 }
 
 // New builds the service dependencies and HTTP server.
-func New(ctx context.Context, cfg config.Config) (*App, error) {
-	providers, err := telemetry.Init(ctx, cfg.LogLevel)
+func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
+	providers, err := telemetry.Init(ctx, logger)
 	if err != nil {
 		return nil, fmt.Errorf("initialize telemetry: %w", err)
 	}

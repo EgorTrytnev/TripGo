@@ -12,7 +12,10 @@ import (
 // Problem converts a domain error to its public HTTP status and Problem Details body.
 func Problem(err error) (int, api.Problem) {
 	status, statusCode, code, title, detail := http.StatusInternalServerError, int32(http.StatusInternalServerError), "internal_error", "Internal Server Error", "An unexpected error occurred"
+	var validation domaintrip.ValidationError
 	switch {
+	case errors.As(err, &validation):
+		status, statusCode, code, title, detail = http.StatusBadRequest, int32(http.StatusBadRequest), "invalid_request", "Invalid request", validation.Message
 	case errors.Is(err, domaintrip.ErrNotFound):
 		status, statusCode, code, title, detail = http.StatusNotFound, int32(http.StatusNotFound), "trip_not_found", "Trip not found", "No trip exists with this id"
 	case errors.Is(err, domaintrip.ErrCompleted):

@@ -29,7 +29,7 @@ linters:
       rules:
         domain:
           files:
-            - "internal/domain/**/*.go"
+            - "**/internal/domain/**"
           deny:
             - pkg: "net/http"
               desc: "domain code must not depend on HTTP"
@@ -43,12 +43,24 @@ linters:
               desc: "domain code must not depend on telemetry"
         transport:
           files:
-            - "internal/http/**/*.go"
+            - "**/internal/http/**"
           deny:
             - pkg: "github.com/EgorTrytnev/TripGo/internal/repository"
               desc: "HTTP depends on usecases, not repositories"
             - pkg: "github.com/EgorTrytnev/TripGo/internal/infra"
               desc: "HTTP depends on usecases, not infrastructure"
+        usecase:
+          files:
+            - "**/internal/usecase/**"
+          deny:
+            - pkg: "net/http"
+              desc: "usecases must not depend on HTTP"
+            - pkg: "github.com/go-chi/chi/v5"
+              desc: "usecases must not depend on chi"
+            - pkg: "github.com/jackc/pgx"
+              desc: "usecases must not depend on pgx"
+            - pkg: "github.com/Masterminds/squirrel"
+              desc: "usecases must not depend on SQL builders"
 
 formatters:
   enable:

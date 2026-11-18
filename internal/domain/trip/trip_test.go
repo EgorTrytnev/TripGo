@@ -1,11 +1,23 @@
 package trip
 
 import (
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/EgorTrytnev/TripGo/internal/model"
 )
+
+func TestValidate(t *testing.T) {
+	id := uuid.New()
+	err := Validate(id, id, 91, 0, 0, 0, 1)
+	var validation ValidationError
+	if !errors.As(err, &validation) || validation.Field != "start_point.latitude" {
+		t.Fatalf("got %v, want start point validation error", err)
+	}
+}
 
 func TestFinish(t *testing.T) {
 	at := time.Date(2026, 11, 4, 9, 0, 0, 0, time.UTC)

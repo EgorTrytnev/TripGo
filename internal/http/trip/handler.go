@@ -12,37 +12,30 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
-
+	domaintrip "github.com/EgorTrytnev/TripGo/internal/domain/trip"
 	api "github.com/EgorTrytnev/TripGo/internal/generated"
 	"github.com/EgorTrytnev/TripGo/internal/http/domainerror"
+	createhttp "github.com/EgorTrytnev/TripGo/internal/http/trip/create"
+	finishhttp "github.com/EgorTrytnev/TripGo/internal/http/trip/finish"
+	gethttp "github.com/EgorTrytnev/TripGo/internal/http/trip/get"
 	"github.com/EgorTrytnev/TripGo/internal/model"
 	"github.com/EgorTrytnev/TripGo/internal/usecase/trip/create"
 )
 
-type createUseCase interface {
-	Execute(context.Context, create.Input) (model.Trip, error)
-}
-type getUseCase interface {
-	Execute(context.Context, uuid.UUID) (model.Trip, error)
-}
-type finishUseCase interface {
-	Execute(context.Context, uuid.UUID) (model.Trip, error)
-}
 type readiness interface{ Ping(context.Context) error }
 
 // Handler implements the HTTP transport for trip and service endpoints.
 type Handler struct {
-	create       createUseCase
-	get          getUseCase
-	finish       finishUseCase
+	create       createhttp.UseCase
+	get          gethttp.UseCase
+	finish       finishhttp.UseCase
 	db           readiness
 	queryTimeout time.Duration
 	logger       *slog.Logger
 }
 
 // NewHandler wires the transport to its usecases and readiness dependency.
-func NewHandler(create createUseCase, get getUseCase, finish finishUseCase, db readiness, queryTimeout time.Duration, logger *slog.Logger) *Handler {
+func NewHandler(create createhttp.UseCase, get gethttp.UseCase, finish finishhttp.UseCase, db readiness, queryTimeout time.Duration, logger *slog.Logger) *Handler {
 	return &Handler{create: create, get: get, finish: finish, db: db, queryTimeout: queryTimeout, logger: logger}
 }
 
@@ -66,8 +59,12 @@ func (h *Handler) CreateTrip(w http.ResponseWriter, r *http.Request, params api.
 		invalid(w, r, "Request body must contain one JSON object")
 		return
 	}
-	if err := validateTripRequest(body, req); err != nil {
+	if err := validateJSONFields(body); err != nil {
 		invalid(w, r, err.Error())
+		return
+	}
+	if err := domaintrip.Validate(req.UserId, req.DriverId, req.StartPoint.Latitude, req.StartPoint.Longitude, req.EndPoint.Latitude, req.EndPoint.Longitude, req.Price); err != nil {
+		h.writeServiceError(w, r, err)
 		return
 	}
 	trip, err := h.create.Execute(r.Context(), create.Input{UserID: req.UserId, DriverID: req.DriverId, StartLat: req.StartPoint.Latitude, StartLong: req.StartPoint.Longitude, EndLat: req.EndPoint.Latitude, EndLong: req.EndPoint.Longitude, Price: req.Price})
@@ -127,10 +124,10 @@ func (h *Handler) writeServiceError(w http.ResponseWriter, r *http.Request, err 
 		h.logger.ErrorContext(r.Context(), "request failed", "error", err)
 	}
 	problem.Instance = &r.URL.Path
-	writeJSON(w, status, problem)
+	writeProblemResponse(w, status, problem)
 }
 
-func validateTripRequest(body []byte, req api.TripData) error {
+func validateJSONFields(body []byte) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
 		return errors.New("request body must be a JSON object")
@@ -141,37 +138,20 @@ func validateTripRequest(body []byte, req api.TripData) error {
 			return fmt.Errorf("field %q is required", key)
 		}
 	}
-	if req.UserId == uuid.Nil || req.DriverId == uuid.Nil {
-		return errors.New("user_id and driver_id must be non-zero UUIDs")
-	}
-	if err := validateCoordinates(fields["start_point"], "start_point", req.StartPoint); err != nil {
-		return err
-	}
-	if err := validateCoordinates(fields["end_point"], "end_point", req.EndPoint); err != nil {
-		return err
-	}
-	if req.Price < 0 {
-		return errors.New("price must be greater than or equal to zero")
-	}
-	return nil
-}
-
-func validateCoordinates(raw json.RawMessage, field string, c api.Coordinates) error {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
-		return fmt.Errorf("%s must be an object", field)
-	}
-	for _, key := range []string{"latitude", "longitude"} {
-		value, ok := fields[key]
-		if !ok || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-			return fmt.Errorf("%s.%s is required", field, key)
+	for _, point := range []struct {
+		raw   json.RawMessage
+		field string
+	}{{fields["start_point"], "start_point"}, {fields["end_point"], "end_point"}} {
+		var pointFields map[string]json.RawMessage
+		if err := json.Unmarshal(point.raw, &pointFields); err != nil || pointFields == nil {
+			return errors.New(point.field + " must be an object")
 		}
-	}
-	if c.Latitude < -90 || c.Latitude > 90 {
-		return fmt.Errorf("%s.latitude must be between -90 and 90", field)
-	}
-	if c.Longitude < -180 || c.Longitude > 180 {
-		return fmt.Errorf("%s.longitude must be between -180 and 180", field)
+		for _, key := range []string{"latitude", "longitude"} {
+			value, ok := pointFields[key]
+			if !ok || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return errors.New(point.field + "." + key + " is required")
+			}
+		}
 	}
 	return nil
 }
@@ -192,7 +172,15 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func writeProblem(w http.ResponseWriter, r *http.Request, code, title, detail string) {
 	p := api.Problem{Type: "https://tripgo.example/problems/" + code, Title: title, Status: int32(http.StatusBadRequest), Detail: &detail, Instance: &r.URL.Path, Code: code}
+	writeProblemResponse(w, http.StatusBadRequest, p)
+}
+
+func writeProblemResponse(w http.ResponseWriter, status int, p api.Problem) {
+	if status < 0 || status > 999 {
+		status = http.StatusInternalServerError
+	}
+	p.Status = int32(status)
 	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(http.StatusBadRequest)
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(p)
 }

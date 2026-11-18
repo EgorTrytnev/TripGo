@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -39,7 +40,7 @@ func NewHTTPMetrics(m metric.Meter) (*HTTPMetrics, error) {
 
 // Chain applies Recover, Tracing, Logging and Metrics around the router.
 func Chain(next http.Handler, logger *slog.Logger, metrics *HTTPMetrics) http.Handler {
-	wrapped := Recover(logger, Tracing(Logging(logger, Metrics(metrics, next))))
+	wrapped := Tracing(Recover(logger, Logging(logger, Metrics(metrics, next))))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		holder := &routeHolder{}
 		wrapped.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), routeHolderKey{}, holder)))
@@ -55,9 +56,21 @@ type (
 func CaptureRoute(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		wrapped := &statusWriter{ResponseWriter: w}
+		if holder, ok := r.Context().Value(routeHolderKey{}).(*routeHolder); ok {
+			if rc := chi.RouteContext(r.Context()); rc != nil {
+				holder.pattern = rc.RoutePattern()
+			}
+		}
 		defer func() {
 			if recovered := recover(); recovered != nil {
+				if holder, ok := r.Context().Value(routeHolderKey{}).(*routeHolder); ok {
+					if rc := chi.RouteContext(r.Context()); rc != nil {
+						holder.pattern = rc.RoutePattern()
+					}
+				}
 				if span := trace.SpanFromContext(r.Context()); span.SpanContext().IsValid() {
+					span.SetName(r.Method + " " + routePattern(r))
+					span.SetAttributes(attribute.String("http.route", routePattern(r)))
 					span.SetStatus(codes.Error, "HTTP handler panicked")
 					span.SetAttributes(attribute.String("error.type", "panic"))
 				}
@@ -100,7 +113,7 @@ func Recover(logger *slog.Logger, next http.Handler) http.Handler {
 
 // Tracing creates an OpenTelemetry server span for each request.
 func Tracing(next http.Handler) http.Handler {
-	return otelhttp.NewHandler(next, "trip-service", otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string { return r.Method + " " + routeFromRequest(r) }))
+	return otelhttp.NewHandler(next, "trip-service", otelhttp.WithMeterProvider(noop.NewMeterProvider()), otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string { return r.Method + " " + routeFromRequest(r) }))
 }
 
 // Logging records one structured event after a request completes.

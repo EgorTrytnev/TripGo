@@ -54,11 +54,24 @@ func TestCreateTripRollsBackOnRepositoryError(t *testing.T) {
 	failure := errors.New("database down")
 	repo.EXPECT().CreateTrip(gomock.Any(), gomock.Any()).Return(failure)
 	tx.EXPECT().Do(gomock.Any(), gomock.Any()).DoAndReturn(func(c context.Context, fn func(context.Context) error) error { return fn(c) })
-	result, err := create.New(repo, tx, counter, slog.New(slog.NewTextHandler(io.Discard, nil))).Execute(context.Background(), create.Input{})
+	result, err := create.New(repo, tx, counter, slog.New(slog.NewTextHandler(io.Discard, nil))).Execute(context.Background(), create.Input{UserID: uuid.New(), DriverID: uuid.New()})
 	if !errors.Is(err, failure) {
 		t.Fatalf("expected repository error, got %v", err)
 	}
 	if result.ID != uuid.Nil {
 		t.Fatalf("expected empty result after failure, got %+v", result)
+	}
+}
+
+func TestCreateTripReturnsDriverBusyWithoutIncreasingCounter(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	repo := NewMocktripRepository(ctrl)
+	tx := NewMocktxManager(ctrl)
+	counter := NewMocktripCounter(ctrl)
+	repo.EXPECT().CreateTrip(gomock.Any(), gomock.Any()).Return(trip.ErrDriverBusy)
+	tx.EXPECT().Do(gomock.Any(), gomock.Any()).DoAndReturn(func(c context.Context, fn func(context.Context) error) error { return fn(c) })
+	_, err := create.New(repo, tx, counter, nil).Execute(context.Background(), create.Input{UserID: uuid.New(), DriverID: uuid.New()})
+	if !errors.Is(err, trip.ErrDriverBusy) {
+		t.Fatalf("got %v, want driver busy", err)
 	}
 }
