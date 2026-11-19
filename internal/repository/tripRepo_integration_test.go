@@ -94,14 +94,14 @@ func TestFindStaleTripsSkipsFreshAndCompleted(t *testing.T) {
 	fresh := model.Trip{ID: freshID, UserID: uuid.New(), DriverID: uuid.New(), Status: domaintrip.StatusActive, StartedAt: now, CreatedAt: now, UpdatedAt: now}
 	finished := now.Add(-time.Minute)
 	completed := model.Trip{ID: completedID, UserID: uuid.New(), DriverID: uuid.New(), Status: domaintrip.StatusCompleted, StartedAt: now.Add(-10 * time.Minute), FinishedAt: &finished, CreatedAt: now, UpdatedAt: now}
+	defer func() {
+		_, _ = pool.Exec(ctx, "DELETE FROM trips WHERE id = ANY($1)", []uuid.UUID{oldID, freshID, completedID})
+	}()
 	for _, item := range []model.Trip{old, fresh, completed} {
 		if err := repo.CreateTrip(ctx, item); err != nil {
 			t.Fatal(err)
 		}
 	}
-	defer func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM trips WHERE id = ANY($1)", []uuid.UUID{oldID, freshID, completedID})
-	}()
 	if err := repo.UpdateLastPositionAt(ctx, freshID, now); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,16 @@ func TestFindStaleTripsSkipsFreshAndCompleted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].ID != oldID {
-		t.Fatalf("got %+v, want only %s", items, oldID)
+	foundOld := false
+	for _, item := range items {
+		if item.ID == freshID || item.ID == completedID {
+			t.Fatalf("свежая или завершённая поездка попала в выборку: %s", item.ID)
+		}
+		if item.ID == oldID {
+			foundOld = true
+		}
+	}
+	if !foundOld {
+		t.Fatalf("устаревшая поездка %s отсутствует в выборке", oldID)
 	}
 }

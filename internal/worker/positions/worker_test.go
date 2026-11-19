@@ -8,12 +8,71 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/goleak"
 
 	"github.com/EgorTrytnev/TripGo/internal/model"
 )
 
+func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+
+type fakeTicker struct{ ticks chan time.Time }
+
+func (t *fakeTicker) Ticks() <-chan time.Time { return t.ticks }
+func (t *fakeTicker) Stop()                   {}
+
 type scannerStub struct {
 	trips []model.StaleTrip
+}
+
+type blockingScanner struct {
+	started chan struct{}
+	release chan struct{}
+	trip    model.StaleTrip
+}
+
+func (s *blockingScanner) FindStaleTrips(ctx context.Context, _ time.Duration) ([]model.StaleTrip, error) {
+	close(s.started)
+	select {
+	case <-s.release:
+		return []model.StaleTrip{s.trip}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestCancelDuringScan(t *testing.T) {
+	trip := staleTrip()
+	scanner := &blockingScanner{started: make(chan struct{}), release: make(chan struct{}), trip: trip}
+	w := New(scanner, &senderStub{}, time.Hour, time.Minute, time.Second, 1, 1, nil, nil)
+	done := make(chan struct{})
+	go func() { w.scanOnce(context.Background()); close(done) }()
+	<-scanner.started
+	w.Cancel(trip.ID)
+	close(scanner.release)
+	<-done
+	if len(w.queue) != 0 {
+		t.Fatal("отменённая задача попала в очередь")
+	}
+}
+
+func TestStopCancelsActiveScan(t *testing.T) {
+	scanner := &blockingScanner{started: make(chan struct{}), release: make(chan struct{})}
+	w := New(scanner, &senderStub{}, time.Hour, time.Minute, time.Second, 1, 1, nil, nil)
+	tick := &fakeTicker{ticks: make(chan time.Time, 1)}
+	w.newTicker = func(time.Duration) ticker { return tick }
+	w.Start(context.Background())
+	tick.ticks <- time.Now()
+	<-scanner.started
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := w.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-w.scanDone:
+	default:
+		t.Fatal("сканер не завершился")
+	}
 }
 
 func (s scannerStub) FindStaleTrips(context.Context, time.Duration) ([]model.StaleTrip, error) {

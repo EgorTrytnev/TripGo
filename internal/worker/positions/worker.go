@@ -74,14 +74,27 @@ type Worker struct {
 	metrics                       *Metrics
 	mu                            sync.Mutex
 	pending                       map[uuid.UUID]*job
+	canceled                      map[uuid.UUID]struct{}
+	scanning                      bool
 	stopScan                      context.CancelFunc
 	stopWorkers                   context.CancelFunc
+	scanDone                      chan struct{}
 	done                          chan struct{}
+	newTicker                     func(time.Duration) ticker
 }
+
+type ticker interface {
+	Ticks() <-chan time.Time
+	Stop()
+}
+
+type realTicker struct{ *time.Ticker }
+
+func (t realTicker) Ticks() <-chan time.Time { return t.C }
 
 // New создаёт компонент опроса.
 func New(repo tripScanner, sender pushSender, interval, staleAfter, timeout time.Duration, workers, queueSize int, logger *slog.Logger, metrics *Metrics) *Worker {
-	return &Worker{repo: repo, push: sender, interval: interval, staleAfter: staleAfter, timeout: timeout, workers: workers, queue: make(chan *job, queueSize), logger: logger, metrics: metrics, pending: make(map[uuid.UUID]*job), done: make(chan struct{})}
+	return &Worker{repo: repo, push: sender, interval: interval, staleAfter: staleAfter, timeout: timeout, workers: workers, queue: make(chan *job, queueSize), logger: logger, metrics: metrics, pending: make(map[uuid.UUID]*job), canceled: make(map[uuid.UUID]struct{}), scanDone: make(chan struct{}), done: make(chan struct{}), newTicker: func(d time.Duration) ticker { return realTicker{time.NewTicker(d)} }}
 }
 
 // Start запускает сканер и заданное число воркеров.
@@ -94,7 +107,11 @@ func (w *Worker) Start(ctx context.Context) {
 	for i := 0; i < w.workers; i++ {
 		go func() { defer group.Done(); w.work(workerCtx) }()
 	}
-	go func() { w.scan(scanCtx); close(w.queue) }()
+	go func() {
+		defer close(w.scanDone)
+		w.scan(scanCtx)
+		close(w.queue)
+	}()
 	go func() { group.Wait(); close(w.done) }()
 }
 
@@ -102,15 +119,20 @@ func (w *Worker) Start(ctx context.Context) {
 func (w *Worker) Stop(ctx context.Context) error {
 	w.stopScan()
 	select {
-	case <-w.done:
-	default:
-	}
-	select {
-	case <-w.done:
-		w.stopWorkers()
-		return nil
+	case <-w.scanDone:
+		select {
+		case <-w.done:
+			w.stopWorkers()
+			return nil
+		case <-ctx.Done():
+			w.stopWorkers()
+			<-w.done
+			return ctx.Err()
+		}
 	case <-ctx.Done():
 		w.stopWorkers()
+		<-w.scanDone
+		<-w.done
 		return ctx.Err()
 	}
 }
@@ -119,15 +141,18 @@ func (w *Worker) Stop(ctx context.Context) error {
 func (w *Worker) Cancel(tripID uuid.UUID) {
 	w.mu.Lock()
 	delete(w.pending, tripID)
+	if w.scanning {
+		w.canceled[tripID] = struct{}{}
+	}
 	w.mu.Unlock()
 }
 
 func (w *Worker) scan(ctx context.Context) {
-	ticker := time.NewTicker(w.interval)
+	ticker := w.newTicker(w.interval)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-ticker.C:
+		case <-ticker.Ticks():
 			w.scanOnce(ctx)
 		case <-ctx.Done():
 			return
@@ -136,6 +161,15 @@ func (w *Worker) scan(ctx context.Context) {
 }
 
 func (w *Worker) scanOnce(ctx context.Context) {
+	w.mu.Lock()
+	w.scanning = true
+	w.mu.Unlock()
+	defer func() {
+		w.mu.Lock()
+		w.scanning = false
+		clear(w.canceled)
+		w.mu.Unlock()
+	}()
 	ctx, span := otel.Tracer("tripgo.positions").Start(ctx, "scan stale trips")
 	defer span.End()
 	trips, err := w.repo.FindStaleTrips(ctx, w.staleAfter)
@@ -149,7 +183,8 @@ func (w *Worker) scanOnce(ctx context.Context) {
 		j := &job{trip: trip, span: span.SpanContext()}
 		w.mu.Lock()
 		result := "duplicate"
-		if _, exists := w.pending[trip.ID]; !exists {
+		_, canceled := w.canceled[trip.ID]
+		if _, exists := w.pending[trip.ID]; !canceled && !exists {
 			select {
 			case w.queue <- j:
 				w.pending[trip.ID] = j
@@ -172,7 +207,17 @@ func (w *Worker) scanOnce(ctx context.Context) {
 }
 
 func (w *Worker) work(ctx context.Context) {
-	for j := range w.queue {
+	for {
+		var j *job
+		var ok bool
+		select {
+		case j, ok = <-w.queue:
+			if !ok {
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
 		if w.metrics != nil {
 			w.metrics.Queue.Add(ctx, -1)
 		}
