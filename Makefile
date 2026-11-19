@@ -19,7 +19,7 @@ migrate-down:
 generate:
 	@go tool oapi-codegen \
 		-generate types,chi-server \
-		-include-operation-ids createTrip,getTrip,finishTrip,health,ready \
+		-include-operation-ids createTrip,getTrip,finishTrip,createTripPosition,listTripPositions,health,ready \
 		-package api \
 		-o internal/generated/api.gen.go \
 		contracts/openapi/trip-service.openapi.yaml

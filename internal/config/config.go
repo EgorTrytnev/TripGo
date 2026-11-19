@@ -27,6 +27,12 @@ type Config struct {
 	DatabaseMaxConnLife    time.Duration
 	DatabaseConnectTimeout time.Duration
 	DatabaseQueryTimeout   time.Duration
+	PushHTTPURL            string
+	PushRequestTimeout     time.Duration
+	PositionCheckInterval  time.Duration
+	PositionStaleAfter     time.Duration
+	PositionWorkers        int
+	PositionQueueSize      int
 }
 
 // Load reads the environment and validates required settings.
@@ -80,6 +86,27 @@ func Load() (Config, error) {
 	if cfg.DatabaseQueryTimeout, err = duration("DATABASE_QUERY_TIMEOUT"); err != nil {
 		return Config{}, err
 	}
+	if cfg.PushHTTPURL, err = required("PUSH_HTTP_URL"); err != nil {
+		return Config{}, err
+	}
+	if cfg.PushRequestTimeout, err = durationOrDefault("PUSH_REQUEST_TIMEOUT", time.Second); err != nil {
+		return Config{}, err
+	}
+	if cfg.PositionCheckInterval, err = durationOrDefault("POSITION_CHECK_INTERVAL", 30*time.Second); err != nil {
+		return Config{}, err
+	}
+	if cfg.PositionStaleAfter, err = durationOrDefault("POSITION_STALE_AFTER", time.Minute); err != nil {
+		return Config{}, err
+	}
+	if cfg.PositionWorkers, err = integerOrDefault("POSITION_WORKERS", 4); err != nil {
+		return Config{}, err
+	}
+	if cfg.PositionQueueSize, err = integerOrDefault("POSITION_QUEUE_SIZE", 100); err != nil {
+		return Config{}, err
+	}
+	if cfg.PositionWorkers < 1 || cfg.PositionQueueSize < 1 {
+		return Config{}, errors.New("POSITION_WORKERS and POSITION_QUEUE_SIZE must be positive")
+	}
 
 	if cfg.DatabaseMaxConns < 1 || cfg.DatabaseMinConns < 0 || cfg.DatabaseMinConns > cfg.DatabaseMaxConns {
 		return Config{}, errors.New("DATABASE_MIN_CONNS must be >= 0 and <= DATABASE_MAX_CONNS")
@@ -105,6 +132,14 @@ func integer(key string) (int32, error) {
 		return 0, fmt.Errorf("%s must be an integer: %w", key, err)
 	}
 	return int32(parsed), nil
+}
+
+func integerOrDefault(key string, fallback int) (int, error) {
+	if strings.TrimSpace(os.Getenv(key)) == "" {
+		return fallback, nil
+	}
+	value, err := integer(key)
+	return int(value), err
 }
 
 func duration(key string) (time.Duration, error) {

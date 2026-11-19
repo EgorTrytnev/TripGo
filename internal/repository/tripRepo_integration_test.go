@@ -73,3 +73,52 @@ func TestCreateTripRejectsBusyDriver(t *testing.T) {
 		t.Fatalf("got %v, want ErrDriverBusy", err)
 	}
 }
+
+func TestFindStaleTripsSkipsFreshAndCompleted(t *testing.T) {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	repo := repository.NewTripRepository(pool, 3*time.Second)
+	now := time.Now().UTC()
+	oldID := uuid.New()
+	freshID := uuid.New()
+	completedID := uuid.New()
+	old := model.Trip{ID: oldID, UserID: uuid.New(), DriverID: uuid.New(), Status: domaintrip.StatusActive, StartedAt: now.Add(-10 * time.Minute), CreatedAt: now, UpdatedAt: now}
+	fresh := model.Trip{ID: freshID, UserID: uuid.New(), DriverID: uuid.New(), Status: domaintrip.StatusActive, StartedAt: now, CreatedAt: now, UpdatedAt: now}
+	finished := now.Add(-time.Minute)
+	completed := model.Trip{ID: completedID, UserID: uuid.New(), DriverID: uuid.New(), Status: domaintrip.StatusCompleted, StartedAt: now.Add(-10 * time.Minute), FinishedAt: &finished, CreatedAt: now, UpdatedAt: now}
+	defer func() {
+		_, _ = pool.Exec(ctx, "DELETE FROM trips WHERE id = ANY($1)", []uuid.UUID{oldID, freshID, completedID})
+	}()
+	for _, item := range []model.Trip{old, fresh, completed} {
+		if err := repo.CreateTrip(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.UpdateLastPositionAt(ctx, freshID, now); err != nil {
+		t.Fatal(err)
+	}
+	items, err := repo.FindStaleTrips(ctx, 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundOld := false
+	for _, item := range items {
+		if item.ID == freshID || item.ID == completedID {
+			t.Fatalf("свежая или завершённая поездка попала в выборку: %s", item.ID)
+		}
+		if item.ID == oldID {
+			foundOld = true
+		}
+	}
+	if !foundOld {
+		t.Fatalf("устаревшая поездка %s отсутствует в выборке", oldID)
+	}
+}

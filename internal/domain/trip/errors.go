@@ -1,9 +1,29 @@
 // Package trip contains trip state rules and domain errors.
 package trip
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
-// ValidationError describes an invalid trip field.
+// ValidatePosition проверяет полученную координату поездки.
+func ValidatePosition(latitude, longitude float64, recordedAt, now time.Time) error {
+	if latitude < -90 || latitude > 90 {
+		return ValidationError{Field: "coordinates.latitude", Message: "coordinates.latitude must be between -90 and 90"}
+	}
+	if longitude < -180 || longitude > 180 {
+		return ValidationError{Field: "coordinates.longitude", Message: "coordinates.longitude must be between -180 and 180"}
+	}
+	if recordedAt.IsZero() {
+		return ValidationError{Field: "recorded_at", Message: "recorded_at is required"}
+	}
+	if recordedAt.After(now.Add(time.Minute)) {
+		return ValidationError{Field: "recorded_at", Message: "recorded_at must not be more than one minute in the future"}
+	}
+	return nil
+}
+
+// ValidationError описывает ошибку конкретного поля.
 type ValidationError struct {
 	Field   string
 	Message string
@@ -11,7 +31,7 @@ type ValidationError struct {
 
 func (e ValidationError) Error() string { return e.Message }
 
-// Validate checks the rules that belong to the trip domain.
+// Validate проверяет правила поездки.
 func Validate(userID, driverID [16]byte, startLat, startLong, endLat, endLong float64, price int64) error {
 	if userID == [16]byte{} {
 		return ValidationError{Field: "user_id", Message: "user_id must be a non-zero UUID"}

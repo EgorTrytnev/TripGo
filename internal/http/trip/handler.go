@@ -18,25 +18,35 @@ import (
 	createhttp "github.com/EgorTrytnev/TripGo/internal/http/trip/create"
 	finishhttp "github.com/EgorTrytnev/TripGo/internal/http/trip/finish"
 	gethttp "github.com/EgorTrytnev/TripGo/internal/http/trip/get"
+	positionhttp "github.com/EgorTrytnev/TripGo/internal/http/trip/position"
 	"github.com/EgorTrytnev/TripGo/internal/model"
 	"github.com/EgorTrytnev/TripGo/internal/usecase/trip/create"
+	positionusecase "github.com/EgorTrytnev/TripGo/internal/usecase/trip/position"
 )
 
 type readiness interface{ Ping(context.Context) error }
 
 // Handler implements the HTTP transport for trip and service endpoints.
 type Handler struct {
-	create       createhttp.UseCase
-	get          gethttp.UseCase
-	finish       finishhttp.UseCase
-	db           readiness
-	queryTimeout time.Duration
-	logger       *slog.Logger
+	create         createhttp.UseCase
+	get            gethttp.UseCase
+	finish         finishhttp.UseCase
+	positions      positionhttp.UseCase
+	positionCancel positionhttp.Canceler
+	db             readiness
+	queryTimeout   time.Duration
+	logger         *slog.Logger
 }
 
+func (h *Handler) SetPositionCanceler(canceler positionhttp.Canceler) { h.positionCancel = canceler }
+
 // NewHandler wires the transport to its usecases and readiness dependency.
-func NewHandler(create createhttp.UseCase, get gethttp.UseCase, finish finishhttp.UseCase, db readiness, queryTimeout time.Duration, logger *slog.Logger) *Handler {
-	return &Handler{create: create, get: get, finish: finish, db: db, queryTimeout: queryTimeout, logger: logger}
+func NewHandler(create createhttp.UseCase, get gethttp.UseCase, finish finishhttp.UseCase, db readiness, queryTimeout time.Duration, logger *slog.Logger, positions ...positionhttp.UseCase) *Handler {
+	var positionUC positionhttp.UseCase
+	if len(positions) > 0 {
+		positionUC = positions[0]
+	}
+	return &Handler{create: create, get: get, finish: finish, positions: positionUC, db: db, queryTimeout: queryTimeout, logger: logger}
 }
 
 // CreateTrip validates and creates a trip.
@@ -95,6 +105,68 @@ func (h *Handler) FinishTrip(w http.ResponseWriter, r *http.Request, id api.Trip
 		return
 	}
 	writeJSON(w, http.StatusOK, toResponse(item))
+}
+
+// CreateTripPosition сохраняет одну точку маршрута.
+func (h *Handler) CreateTripPosition(w http.ResponseWriter, r *http.Request, id api.TripId) {
+	if h.positions == nil {
+		invalid(w, r, "Position usecase is not configured")
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		invalid(w, r, "Request body is invalid")
+		return
+	}
+	var req api.PositionData
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		invalid(w, r, "Request body is invalid")
+		return
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		invalid(w, r, "Request body must contain one JSON object")
+		return
+	}
+	var fields struct {
+		Coordinates *struct {
+			Latitude  *float64 `json:"latitude"`
+			Longitude *float64 `json:"longitude"`
+		} `json:"coordinates"`
+		RecordedAt *time.Time `json:"recorded_at"`
+	}
+	if err := json.Unmarshal(body, &fields); err != nil || fields.Coordinates == nil || fields.Coordinates.Latitude == nil || fields.Coordinates.Longitude == nil || fields.RecordedAt == nil {
+		invalid(w, r, "coordinates, latitude, longitude and recorded_at are required")
+		return
+	}
+	item, err := h.positions.Create(r.Context(), positionusecase.Input{TripID: id, Latitude: req.Coordinates.Latitude, Longitude: req.Coordinates.Longitude, RecordedAt: req.RecordedAt})
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	if h.positionCancel != nil {
+		h.positionCancel.Cancel(id)
+	}
+	writeJSON(w, http.StatusCreated, toPositionResponse(item))
+}
+
+// ListTripPositions возвращает маршрут поездки.
+func (h *Handler) ListTripPositions(w http.ResponseWriter, r *http.Request, id api.TripId) {
+	items, err := h.positions.List(r.Context(), id)
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+	response := api.TripPositionsResponse{Positions: make([]api.TripPosition, 0, len(items))}
+	for _, item := range items {
+		response.Positions = append(response.Positions, toPositionResponse(item))
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func toPositionResponse(p model.Position) api.TripPosition {
+	return api.TripPosition{Id: p.ID, TripId: p.TripID, Coordinates: api.Coordinates{Latitude: p.Latitude, Longitude: p.Longitude}, RecordedAt: p.RecordedAt}
 }
 
 // Health reports whether the process is running.
@@ -157,7 +229,7 @@ func validateJSONFields(body []byte) error {
 }
 
 func toResponse(t model.Trip) api.Trip {
-	return api.Trip{Id: t.ID, UserId: t.UserID, DriverId: t.DriverID, StartPoint: api.Coordinates{Latitude: t.StartLat, Longitude: t.StartLong}, EndPoint: api.Coordinates{Latitude: t.EndLat, Longitude: t.EndLong}, Price: t.Price, Status: api.TripStatus(t.Status), StartedAt: t.StartedAt, FinishedAt: t.FinishedAt}
+	return api.Trip{Id: t.ID, UserId: t.UserID, DriverId: t.DriverID, StartPoint: api.Coordinates{Latitude: t.StartLat, Longitude: t.StartLong}, EndPoint: api.Coordinates{Latitude: t.EndLat, Longitude: t.EndLong}, Price: t.Price, Status: api.TripStatus(t.Status), StartedAt: t.StartedAt, FinishedAt: t.FinishedAt, LastPositionAt: t.LastPositionAt}
 }
 
 func invalid(w http.ResponseWriter, r *http.Request, detail string) {

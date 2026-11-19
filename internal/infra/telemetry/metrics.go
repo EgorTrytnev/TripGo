@@ -9,8 +9,9 @@ import (
 
 // BusinessMetrics contains counters for trip lifecycle events.
 type BusinessMetrics struct {
-	Created   metric.Int64Counter
-	Completed metric.Int64Counter
+	Created        metric.Int64Counter
+	Completed      metric.Int64Counter
+	PositionsSaved metric.Int64Counter
 }
 
 // NewBusinessMetrics creates trip lifecycle counters.
@@ -23,7 +24,17 @@ func NewBusinessMetrics(m metric.Meter) (*BusinessMetrics, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &BusinessMetrics{Created: created, Completed: completed}, nil
+	positionsSaved, err := m.Int64Counter("tripgo.positions.saved")
+	if err != nil {
+		return nil, err
+	}
+	return &BusinessMetrics{Created: created, Completed: completed, PositionsSaved: positionsSaved}, nil
+}
+
+func (m *BusinessMetrics) AddPositionSaved(ctx context.Context) {
+	if m != nil && m.PositionsSaved != nil {
+		m.PositionsSaved.Add(ctx, 1)
+	}
 }
 
 // AddCreated records newly persisted trips.

@@ -25,6 +25,10 @@ linters:
     - unused
     - whitespace
   settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
     depguard:
       rules:
         domain:
