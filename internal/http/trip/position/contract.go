@@ -15,3 +15,7 @@ type UseCase interface {
 	Create(context.Context, usecase.Input) (model.Position, error)
 	List(context.Context, uuid.UUID) ([]model.Position, error)
 }
+
+type Canceler interface {
+	Cancel(uuid.UUID)
+}

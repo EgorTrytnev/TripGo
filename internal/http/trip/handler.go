@@ -28,14 +28,17 @@ type readiness interface{ Ping(context.Context) error }
 
 // Handler implements the HTTP transport for trip and service endpoints.
 type Handler struct {
-	create       createhttp.UseCase
-	get          gethttp.UseCase
-	finish       finishhttp.UseCase
-	positions    positionhttp.UseCase
-	db           readiness
-	queryTimeout time.Duration
-	logger       *slog.Logger
+	create         createhttp.UseCase
+	get            gethttp.UseCase
+	finish         finishhttp.UseCase
+	positions      positionhttp.UseCase
+	positionCancel positionhttp.Canceler
+	db             readiness
+	queryTimeout   time.Duration
+	logger         *slog.Logger
 }
+
+func (h *Handler) SetPositionCanceler(canceler positionhttp.Canceler) { h.positionCancel = canceler }
 
 // NewHandler wires the transport to its usecases and readiness dependency.
 func NewHandler(create createhttp.UseCase, get gethttp.UseCase, finish finishhttp.UseCase, db readiness, queryTimeout time.Duration, logger *slog.Logger, positions ...positionhttp.UseCase) *Handler {
@@ -110,21 +113,40 @@ func (h *Handler) CreateTripPosition(w http.ResponseWriter, r *http.Request, id 
 		invalid(w, r, "Position usecase is not configured")
 		return
 	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		invalid(w, r, "Request body is invalid")
+		return
+	}
 	var req api.PositionData
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
 		invalid(w, r, "Request body is invalid")
 		return
 	}
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
-		invalid(w, r, err.Error())
+		invalid(w, r, "Request body must contain one JSON object")
+		return
+	}
+	var fields struct {
+		Coordinates *struct {
+			Latitude  *float64 `json:"latitude"`
+			Longitude *float64 `json:"longitude"`
+		} `json:"coordinates"`
+		RecordedAt *time.Time `json:"recorded_at"`
+	}
+	if err := json.Unmarshal(body, &fields); err != nil || fields.Coordinates == nil || fields.Coordinates.Latitude == nil || fields.Coordinates.Longitude == nil || fields.RecordedAt == nil {
+		invalid(w, r, "coordinates, latitude, longitude and recorded_at are required")
 		return
 	}
 	item, err := h.positions.Create(r.Context(), positionusecase.Input{TripID: id, Latitude: req.Coordinates.Latitude, Longitude: req.Coordinates.Longitude, RecordedAt: req.RecordedAt})
 	if err != nil {
 		h.writeServiceError(w, r, err)
 		return
+	}
+	if h.positionCancel != nil {
+		h.positionCancel.Cancel(id)
 	}
 	writeJSON(w, http.StatusCreated, toPositionResponse(item))
 }

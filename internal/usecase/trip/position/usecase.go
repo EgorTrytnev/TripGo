@@ -20,14 +20,19 @@ type Input struct {
 
 // UseCase сохраняет координаты и возвращает маршрут поездки.
 type UseCase struct {
-	repo tripRepository
-	tx   txManager
-	now  func() time.Time
+	repo    tripRepository
+	tx      txManager
+	counter positionCounter
+	now     func() time.Time
 }
 
 // New создаёт usecase для работы с координатами.
-func New(repo tripRepository, tx txManager) *UseCase {
-	return &UseCase{repo: repo, tx: tx, now: time.Now}
+func New(repo tripRepository, tx txManager, counters ...positionCounter) *UseCase {
+	var counter positionCounter
+	if len(counters) > 0 {
+		counter = counters[0]
+	}
+	return &UseCase{repo: repo, tx: tx, counter: counter, now: time.Now}
 }
 
 // Create сохраняет координату активной поездки в одной транзакции.
@@ -52,6 +57,9 @@ func (u *UseCase) Create(ctx context.Context, in Input) (model.Position, error) 
 	})
 	if err != nil {
 		return model.Position{}, err
+	}
+	if u.counter != nil {
+		u.counter.AddPositionSaved(ctx)
 	}
 	return result, nil
 }

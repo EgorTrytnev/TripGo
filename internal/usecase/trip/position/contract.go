@@ -22,3 +22,7 @@ type tripRepository interface {
 type txManager interface {
 	Do(context.Context, func(context.Context) error) error
 }
+
+type positionCounter interface {
+	AddPositionSaved(context.Context)
+}

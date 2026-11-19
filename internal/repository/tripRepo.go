@@ -61,7 +61,7 @@ func (r *TripRepository) CreateTrip(ctx context.Context, trip model.Trip) error 
 			trip.ID, trip.UserID, trip.DriverID,
 			trip.StartLat, trip.StartLong, trip.EndLat, trip.EndLong,
 			trip.Price, trip.Status,
-			trip.StartedAt, trip.FinishedAt, trip.CreatedAt, trip.UpdatedAt).ToSql()
+			trip.StartedAt, trip.FinishedAt, trip.LastPositionAt, trip.CreatedAt, trip.UpdatedAt).ToSql()
 	if err != nil {
 		return fmt.Errorf("create sql error: %w", err)
 	}
@@ -95,7 +95,7 @@ func (r *TripRepository) getTripByID(ctx context.Context, id uuid.UUID, forUpdat
 		"id", "user_id", "driver_id",
 		"start_latitude", "start_longitude", "end_latitude", "end_longitude",
 		"price", "status",
-		"started_at", "finished_at", "created_at", "updated_at").
+		"started_at", "finished_at", "last_position_at", "created_at", "updated_at").
 		From("trips").Where(sq.Eq{"id": id})
 	if forUpdate {
 		queryBuilder = queryBuilder.Suffix("FOR UPDATE")
